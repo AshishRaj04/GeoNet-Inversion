@@ -19,6 +19,8 @@ logs/
 data/*.txt
 data/*.csv
 data/*.json
+data/
+.ipynb_checkpoints/
 
 .vscode/
 .idea/
