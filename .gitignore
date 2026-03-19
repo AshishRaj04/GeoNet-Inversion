@@ -1,36 +1,185 @@
-
+# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
+
+# C-extensions
 *.so
-*.egg-info/
-dist/
+
+# Distribution / packaging
+.Python
 build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
 *.egg
+MANIFEST
 
-.venv/
-venv/
+# PyInstaller
+#  Often used to bundle your python code into a stand-alone executable
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+cover/
+
+# Translations
+*.mo
+*.pot
+
+# Django stuff:
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+
+# Flask stuff:
+instance/
+.webassets-cache
+
+# Scrapy stuff:
+.scrapy
+
+# Sphinx documentation
+docs/_build/
+
+# PyBuilder
+.pybuilder/
+target/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+#   For a library or package, you might want to ignore these files since the Python version is
+#   up to the user. But for a specific project, it can be useful.
+# .python-version
+
+# pipenv
+#   According to pypa/pipenv#598, it is recommended to include Pipfile.lock in version control.
+#   However, in case of collaboration, if having platform-specific dependencies or dependencies
+#   having no cross-platform support, pipenv may install dependencies that don't work, or even
+#   fail to install, on other platforms.
+#Pipfile.lock
+
+# poetry
+#   Similar to Pipfile.lock, it is generally recommended to include poetry.lock in version control.
+#   poetry.lock
+#   pyproject.toml is usually tracked.
+
+# pdm
+#   Similar to Pipfile.lock, it is generally recommended to include pdm.lock in version control.
+#pdm.lock
+#   pdm version markers
+.pdm-python
+.pdm-build/
+
+# PEP 582; used by e.g. github.com/frenzymadness/venvs
+__pypackages__/
+
+# Celery stuff
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath parsed files
+*.sage.py
+
+# Environments
+.env
+.venv
 env/
+venv/
+ENV/
+env.bak/
+venv.bak/
 
-checkpoints/*.pth
-checkpoints/*.pt
-logs/
+# Spyder project settings
+.spyderproject
+.spyproject
 
-data/*.txt
-data/*.csv
-data/*.json
-data/
-.ipynb_checkpoints/
+# Rope project settings
+.ropeproject
 
+# mkdocs documentation
+/site
+
+# Mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# pytype static type analyzer
+.pytype/
+
+# Cython debug symbols
+cython_debug/
+
+# PyCharm
+#  JetBrains specific template is maintained in a separate repository (see below)
+#  .idea/心裡有數 (some common ones are handled below)
+
+# VS Code
 .vscode/
-.idea/
-*.swp
-*.swo
-*~
+
+# Data and Artifacts (Geophysics specific)
+data/
+checkpoints/
+logs/
+plots/
+figures/
+*.npy
+*.npz
+*.h5
+*.segy
+*.sgy
+*.bin
+*.pt
+*.pth
+
+# OS files
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
 
-*.pdf
-.env
+# AI Tools
 .gemini/
 .agent/
+.agents/
