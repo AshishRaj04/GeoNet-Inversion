@@ -183,3 +183,8 @@ Thumbs.db
 .gemini/
 .agent/
 .agents/
+
+# Miscellaneous
+
+index.txt
+generate_gif.py

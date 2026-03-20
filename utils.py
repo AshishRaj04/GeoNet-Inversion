@@ -45,6 +45,17 @@ def plot_loss(losses):
     plt.savefig("results/loss_vs_epochs.png", format="png")
     plt.show()
 
+def plot_lrs(lrs):
+    plt.figure(figsize=(10, 5))
+    plt.plot(lrs, label='Learning Rate')
+    plt.title("Learning Rate vs Epochs")
+    plt.xlabel("Epoch")
+    plt.ylabel("Learning Rate")
+    plt.legend()
+    plt.grid(True)
+    plt.savefig("results/lrs_vs_epochs.png", format="png")
+    plt.show()
+
 def mae_physical(pred, target, y_max):
     p = pred * y_max
     t = target * y_max

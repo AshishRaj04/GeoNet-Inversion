@@ -27,7 +27,7 @@ def evaluate(untrained=False):
         print("Running with untrained model for sanity check.")
 
     uNet.eval()
-
+    print(f"Number of parameters: {sum(param.numel() for param in uNet.parameters())}")
     with torch.no_grad():
         for x, y in loader:
             x, y = x.to(device), y.to(device)
@@ -48,3 +48,9 @@ if __name__ == "__main__":
     args = parser.parse_args()
     
     evaluate(untrained=args.untrained)
+
+# Rough targets:
+# MAE   < 300–400 m/s   ✅
+# RMSE  < 500–700       ✅
+# SSIM  > 0.85          ✅
+# Edge  → as low as possible
