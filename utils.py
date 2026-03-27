@@ -1,9 +1,12 @@
 import torch
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
+import os
 from model import ssim_loss
 
-def plot_prediction(y_pred, y_true):
+def plot_prediction(y_pred, y_true, save_dir=None, filename="pred_vs_GT.png"):
     if isinstance(y_pred, torch.Tensor):
         y_pred = y_pred.cpu().numpy()
     if isinstance(y_true, torch.Tensor):
@@ -31,21 +34,31 @@ def plot_prediction(y_pred, y_true):
     plt.ylabel('Y-axis')
 
     plt.tight_layout()
-    plt.savefig("results/pred_vs_GT.png", format="png")
-    plt.show()
+    if save_dir:
+        os.makedirs(save_dir, exist_ok=True)
+        plt.savefig(os.path.join(save_dir, filename), format="png")
+    else:
+        plt.savefig("results/pred_vs_GT.png", format="png")
+    plt.close()
 
-def plot_loss(losses):
+def plot_loss(losses, val_losses=None, save_dir=None):
     plt.figure(figsize=(10, 5))
     plt.plot(losses, label='Training Loss')
+    if val_losses is not None:
+        plt.plot(val_losses, label='Validation Loss', linestyle='--')
     plt.title("Loss vs Epochs")
     plt.xlabel("Epoch")
     plt.ylabel("Loss")
     plt.legend()
     plt.grid(True)
-    plt.savefig("results/loss_vs_epochs.png", format="png")
-    plt.show()
+    if save_dir:
+        os.makedirs(save_dir, exist_ok=True)
+        plt.savefig(os.path.join(save_dir, "loss_vs_epochs.png"), format="png")
+    else:
+        plt.savefig("results/loss_vs_epochs.png", format="png")
+    plt.close()
 
-def plot_lrs(lrs):
+def plot_lrs(lrs, save_dir=None):
     plt.figure(figsize=(10, 5))
     plt.plot(lrs, label='Learning Rate')
     plt.title("Learning Rate vs Epochs")
@@ -53,8 +66,12 @@ def plot_lrs(lrs):
     plt.ylabel("Learning Rate")
     plt.legend()
     plt.grid(True)
-    plt.savefig("results/lrs_vs_epochs.png", format="png")
-    plt.show()
+    if save_dir:
+        os.makedirs(save_dir, exist_ok=True)
+        plt.savefig(os.path.join(save_dir, "lrs_vs_epochs.png"), format="png")
+    else:
+        plt.savefig("results/lrs_vs_epochs.png", format="png")
+    plt.close()
 
 def mae_physical(pred, target, y_max):
     p = pred * y_max

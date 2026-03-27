@@ -32,7 +32,9 @@ python evaluate.py
 | Version | Architecture | Params | Key Features / Changes | Final Loss | SSIM |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | **v1** | Baseline U-Net | ~467k | Initial proof-of-concept, single file | 5.835 | N/A |
-| **v2** | Scaled U-Net | ~1.93M | Increased channel counts, Cosine Decay with LR Scheduling | 0.8082 | Yes |
+| **v2** | Scaled U-Net | ~1.93M | Increased channel counts, Cosine Decay with LR Scheduling | 0.8082 | 0.9910 |
+| **v2.5** | Scaled U-Net + BN | ~7.8M | Multi-family training (14 files), TV loss, AMP, file-level split | 9.60 (train) | 0.81 (val) |
+| **v3** | Swin-UNet | ~12M | Swin Transformer, DropPath (0.2), Sample-level split, Mode Collapse | 11.88 (train) / 12.21 (val) | 0.8442 (test) |
 
 ---
 
@@ -128,15 +130,156 @@ python evaluate.py
 * LR scheduling improves convergence and final performance.
 * Model captures both global and local geological features reliably.
 
+**⚠️ Generalization Gap (Out-of-Distribution Testing)**
+* V2 was trained on a **single file** from CurveFault-A (`seis2_1_0.npy`).
+* Tested on an **unseen CurveFault-A file** (`seis4_1_0`): MAE `269.61` m/s, SSIM `0.7523`.
+* Tested on **FlatVel-A** (different geology entirely): MAE `281.44` m/s, SSIM `0.7522`.
+* Both unseen datasets scored nearly identically — confirming **single-file overfitting**, not architecture limitations.
+* **Conclusion**: Data diversity (multi-file, multi-family training) is the primary bottleneck, not model capacity. This directly motivates V3's multi-dataset training strategy.
+
 **📂 Artifacts**
 * Weights: `results/v2/uNet_v2.pth`
 * Metrics Plot: `results/v2/epochs_vs_loss_v2.png`
 * LR Schedule: `results/v2/lr_vs_epochs_v2.png`
 
-**➡️ Next Steps for v3**
-* Add Total Variation (TV) loss for smoother regions.
-* Increase Gradient Weight (0.2 --> 0.3)
-* Improve boundary sharpness.
-* Evaluate on multiple files to test generalization.
-* Introduce a validation split.
+**➡️ Next Steps for v2.5**: Scale model capacity (4x channels), add BatchNorm + TV loss, train on multiple files across geological families, introduce val/test splits.
 
+---
+
+### 🟡 Version 2.5: Multi-Family Generalization Experiment
+* **Status**: Completed (stopped early at epoch 81/300 — overfitting detected)
+* **Environment**: Google Colab (T4 GPU), Mixed Precision (FP16)
+* **Architecture**: Scaled U-Net with BatchNorm (~7,704,129 parameters)
+* **Data Configuration**:
+  * **Dataset**: OpenFWI — 6 geological families × 2 sub-variants × 2 files = 20 files (10,000 samples total)
+  * Families: CurveFault, CurveVel, FlatFault, FlatVel, Style (A & B each)
+  * **Split Strategy**: File-level (not sample-level)
+    * Train: 14 files (7,000 samples, 70%)
+    * Val: 3 files (1,500 samples, 15%)
+    * Test: 3 files (1,500 samples, 15%)
+
+**🔁 Key Changes from v2**
+* 4× channel scaling (32→64→128→256 → **64→128→256→512**)
+* Added **BatchNorm** after every conv layer (critical for multi-distribution stability)
+* Added **Total Variation (TV) loss** (weight=0.1) for spatial smoothness
+* Added **gradient clipping** (max_norm=1.0)
+* **Mixed Precision (AMP)** training for T4 speedup
+* **AdamW** with warmup (20 epochs) + cosine decay
+* Validation loop with best-model saving + checkpointing every 50 epochs
+
+**⚙️ Training Configuration**
+* **Optimizer**: AdamW (`lr=0.0005`, `weight_decay=0.01`)
+* **Scheduler**: Linear warmup (20 epochs) → Cosine Decay
+* **Batch Size**: 16
+* **Epochs**: 300 (stopped at 81)
+* **Loss Function**: `100 * (MAE + 0.1 * MSE + 0.3 * Gradient + 0.3 * SSIM + 0.1 * TV)`
+
+**📊 Training Logs**
+
+| Epoch | Train Loss | Val Loss | Val SSIM | Status |
+| :--- | :--- | :--- | :--- | :--- |
+| 1 | 58.26 | 32.05 | 0.5855 | |
+| 10 | 15.42 | 16.95 | 0.8107 | |
+| 20 | 14.36 | 15.77 | **0.8177** | ← Peak Val SSIM |
+| 30 | 13.31 | 15.42 | 0.8146 | |
+| 40 | 12.43 | 15.32 | 0.8112 | |
+| **50** | **11.61** | **15.16** | 0.8124 | ✅ **Best Checkpoint** |
+| 60 | 10.86 | 16.47 | 0.7849 | ⚠️ Val rising |
+| 70 | 10.13 | 15.65 | 0.7837 | ❌ Overfitting |
+| 80 | 9.60 | 16.19 | 0.7694 | ❌ Stopped |
+
+**🧠 Analysis: File-Level Overfitting**
+* Train loss dropped steadily (58.3 → 9.6) but **val loss plateaued at ~15 and began rising after epoch 50**.
+* Train-val gap widened from ~3.5 (epoch 30) to ~6.6 (epoch 80) — classic overfitting signature.
+* Val SSIM peaked at **0.8177** (epoch 20) then degraded to **0.7694** (epoch 80).
+* **Root Cause**: File-level splitting means the model never sees any samples from 6 held-out files (val + test). With 7.8M params on 7,000 samples, it memorizes per-file patterns rather than learning generalizable geology.
+
+**🔑 Key Takeaways**
+* BatchNorm + TV loss + AMP training pipeline works correctly — the infrastructure is solid.
+* 7.8M params is sufficient capacity; the bottleneck is **data exposure**, not model size.
+* File-level splitting is too strict for this dataset size — the model needs to see samples from ALL geological instances during training.
+* Val SSIM of 0.81 on completely unseen files is actually a reasonable baseline, but not production-grade.
+
+**📂 Artifacts**
+* Best Model: `results/v2.5/uNet_v2.5.pth` (epoch 50)
+* Checkpoint: `results/v2.5/checkpoint_epoch_50.pth`
+
+**➡️ Next Steps for v3**
+* Switch to **sample-level splitting** (random 70/15/15 across all 10,000 samples from all 20 files).
+* Every geological family appears in train, val, AND test.
+* Migrate to **Modal** for faster GPU access (A100/H100).
+* If sample-level split succeeds (Val SSIM > 0.95), proceed to benchmark on Marmousi/BP 2004.
+* Implement Swin-UNet : Replacing CNN with Vit in UNet architecture.
+
+---
+
+### 🟢 Version 3: Swin-UNet & Mode Collapse
+* **Status**: Completed (300 Epochs)
+* **Environment**: Modal A100-40GB
+* **Architecture**: Swin-UNet with ~12M parameters (embed_dim=64, num_heads=(2, 4, 8, 16))
+* **Data Configuration**:
+  * **Dataset**: OpenFWI — 6 geological families × 2 sub-variants × 2 files = 20 files (10,000 samples total)
+  * Families: CurveFault, CurveVel, FlatFault, FlatVel, Style (A & B each)
+  * **Split Strategy**: Sample-level (randomly mixed)
+    * Train: 7,000 samples (70%)
+    * Val: 1,500 samples (15%)
+    * Test: 1,500 samples (15%)
+
+**🔁 Key Changes from v2.5**
+* Replaced CNN with pure Vision Transformer **(Swin-UNet)** architecture.
+* Implemented Shifted Window Self-Attention to capture long-range seismic dependencies.
+* Switched to **Sample-level split** completely crossing all datasets.
+* Custom Patch Embedding `(4, 2)` to natively handle highly rectangular data.
+* Added **Stochastic Depth (DropPath)** with linear schedule (0% → 20%) to prevent co-adaptation.
+
+**⚙️ Training Configuration**
+* **Optimizer**: AdamW (`lr=0.0005`, `weight_decay=0.01`)
+* **Scheduler**: Linear Warmup (30 epochs) → Cosine Annealing (270 epochs)
+* **Batch Size**: 16
+* **Epochs**: 300
+* **Loss Function**: `100 * (1.0 * L1 + 0.1 * MSE + 0.3 * Gradient + 0.3 * SSIM + 0.1 * TV)`
+
+**📊 Evaluation Results (Test Set - 1500 Samples)**
+* Final Train Loss: `11.88`
+* Final Val Loss: `12.21`
+* Test MAE: `265.28` m/s
+* Test RMSE: `365.68`
+* Test SSIM: `0.8442`
+* Test Edge Error: `0.0222`
+
+**🖼️ Sample Predictions (Visualizing Mode Collapse)**
+<table> 
+  <tr> 
+    <td><img src="results/v3/pred_vs_GT_1.png" width="300"/></td> 
+    <td><img src="results/v3/pred_vs_GT_2.png" width="300"/></td> 
+  </tr> 
+  <tr> 
+    <td><img src="results/v3/pred_vs_GT_3.png" width="300"/></td> 
+    <td><img src="results/v3/pred_vs_GT_4.png" width="300"/></td> 
+  </tr> 
+  <tr> 
+    <td><img src="results/v3/pred_vs_GT_5.png" width="300"/></td> 
+    <td><img src="results/v3/pred_vs_GT_6.png" width="300"/></td> 
+  </tr> 
+</table>
+
+**🧠 Analysis: Catastrophic Mode Collapse**
+* The heavily requested DropPath successfully bridged the train/eval gap (Train `11.88` vs Val `12.21`). The model structurally avoided overfitting across the 10,000 samples.
+* However, the network suffered from critical **Mode Collapse** on complex geometries.
+* Instead of resolving sharp lateral faults, the model defaulted to generating a purely smooth, identically flat 1D depth profile (blue at surface to red at depth) for every file.
+* The SSIM metric perfectly froze at `0.84` for 150 epochs because the 1D physical depth gradient naturally accounts for ~84% of the Earth's density structural variance, creating a deep mathematical "Safe Zone" local minimum.
+* Over-regularization (0.1 TV Loss + 20% DropPath) violently penalized sharp features and risks, causing the math to retreat and favor generic vertical smoothing over all lateral anomaly resolution.
+
+**🔑 Key Takeaways**
+* Pure data-driven Vision Transformers with standard soft constraints (MSE, TV) hit a hard theoretical ceiling on heavily chaotic geology. They prioritize safe, blurry spatial averages over physically-accurate sharp fault demarcations.
+* Architecture scaling and regularizations limit overfitting perfectly, but completely fail to teach acoustic wave propagation mechanics.
+
+**📂 Artifacts**
+* Weights: `results/v3/uNet_v3.pth`
+* Validation PNGs: `results/v3/pred_vs_GT_*.png`
+* Log History: `results/v3/eval_summary.txt`
+
+**➡️ Next Steps for v4 (PINNs)**
+* Phase 3 concludes the pure data-matching approach.
+* Phase 4 must introduce **Physics-Informed Neural Networks (PINNs)**. 
+* We must integrate the **Acoustic Wave Equation** as a hard physics constraint in the training loop. This will shatter the 1D "Safe Zone" by mathematically forcing the network to recognize that scattered echoes cannot physically originate from flat layers, thus forcing it to resolve sharp lateral faults natively.

@@ -1,0 +1,6 @@
+GeoNet V3 Evaluation (Test Split — 1500 samples)
+==================================================
+Avg MAE:  265.28 m/s
+Avg RMSE: 365.68
+Avg SSIM: 0.8442
+Avg Edge: 0.0222

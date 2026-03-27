@@ -156,7 +156,7 @@ cython_debug/
 .vscode/
 
 # Data and Artifacts (Geophysics specific)
-data/
+# data/
 checkpoints/
 logs/
 plots/
@@ -188,3 +188,13 @@ Thumbs.db
 
 index.txt
 generate_gif.py
+test/
+geonet_startup_checklist.md
+index.html
+test.py
+data/
+index.py
+marmousi_velocity.png
+marmousi_density.png
+marmousi.dat
+vp_marmousi.dat
