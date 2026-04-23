@@ -35,6 +35,7 @@ python evaluate.py
 | **v2** | Scaled U-Net | ~1.93M | Increased channel counts, Cosine Decay with LR Scheduling | 0.8082 | 0.9910 |
 | **v2.5** | Scaled U-Net + BN | ~7.8M | Multi-family training (14 files), TV loss, AMP, file-level split | 9.60 (train) | 0.81 (val) |
 | **v3** | Swin-UNet | ~12M | Swin Transformer, DropPath (0.2), Sample-level split, Mode Collapse | 11.88 (train) / 12.21 (val) | 0.8442 (test) |
+| **v4** | Hybrid CNN-Swin + PINN | ~17.1M | Physics-Informed loss (Deepwave), CNN encoder/decoder, Swin bottleneck | 11.52 (train) / 11.73 (val) | 0.8500 (test) |
 
 ---
 
@@ -283,3 +284,99 @@ python evaluate.py
 * Phase 3 concludes the pure data-matching approach.
 * Phase 4 must introduce **Physics-Informed Neural Networks (PINNs)**. 
 * We must integrate the **Acoustic Wave Equation** as a hard physics constraint in the training loop. This will shatter the 1D "Safe Zone" by mathematically forcing the network to recognize that scattered echoes cannot physically originate from flat layers, thus forcing it to resolve sharp lateral faults natively.
+
+---
+
+### 🟡 Version 4: Physics-Informed Hybrid CNN-Swin (PINN)
+* **Status**: Completed (89 Epochs — stopped early due to Modal preemption & credit limits)
+* **Environment**: Modal A100-80GB
+* **Architecture**: Hybrid CNN-Swin UNet with ~17.1M parameters
+  * **Encoder**: ResConvBlocks (strong local feature extraction)
+  * **Bottleneck**: Swin Transformer (384-dim, 8 heads — global geological reasoning)
+  * **Decoder**: CNN upsampling (sharper reconstructions than transformer upsampling)
+* **Data Configuration**:
+  * **Dataset**: OpenFWI — 20 files (10,000 samples total)
+  * **Split Strategy**: Sample-level (randomly mixed)
+    * Train: 8,000 samples (80%)
+    * Val: 1,000 samples (10%)
+    * Test: 1,500 samples (15% — separate eval split)
+
+**🔁 Key Changes from v3**
+* Replaced pure Swin-UNet with **Hybrid CNN-Swin architecture** — CNN encoder/decoder for local inductive bias + Swin bottleneck for global context.
+* Integrated **Deepwave** (differentiable acoustic wave propagator) for physics-informed training.
+* Added `physics_loss()`: forward-models the predicted velocity through the scalar wave equation and compares synthetic seismic to actual input seismic.
+* **Two-Phase Training Schedule**:
+  * Phase A (Epochs 1–49): Pure data-driven loss (L1 + MSE + SSIM + Gradient + TV)
+  * Phase B (Epochs 50+): Data loss + physics loss (weight ramped from 0.1 → 0.5)
+* Reduced DropPath (0.2 → 0.1) and TV weight to prevent over-smoothing.
+* Upgraded GPU from A100-40GB to A100-80GB.
+
+**🌊 Physics Loss (Deepwave Integration)**
+* OpenFWI Acquisition Geometry: `dx=10m`, `dt=0.001s`, Ricker wavelet at 15Hz
+* 5 sources at verified positions `[0, 17, 34, 52, 69]`, 70 surface receivers
+* Per-batch: de-normalizes predicted velocity → runs `deepwave.scalar()` forward modeling → compares synthetic vs observed seismic (amplitude-normalized MSE)
+
+**⚙️ Training Configuration**
+* **Optimizer**: AdamW (`lr=0.0005`, `weight_decay=0.01`)
+* **Scheduler**: Linear Warmup (50 epochs) → Cosine Annealing (350 epochs)
+* **Batch Size**: 16
+* **Epochs**: 89 / 400 (preempted)
+* **Loss Function**: `100 * (1.0 * L1 + 0.1 * MSE + 0.3 * Gradient + 0.3 * SSIM + 0.01 * TV) + physics_weight * physics_loss`
+
+**📊 Evaluation Results (Test Set - 1500 Samples)**
+* Final Train Loss: `11.52`
+* Final Val Loss: `11.73`
+* Test MAE: `251.18` m/s
+* Test RMSE: `343.47`
+* Test SSIM: `0.8500`
+* Test Edge Error: `0.0227`
+
+**📈 V3 → V4 Improvement**
+
+| Metric | V3 | V4 | Change |
+| :--- | :--- | :--- | :--- |
+| Test MAE | 265.28 m/s | 251.18 m/s | **↓ 5.3%** |
+| Test RMSE | 365.68 | 343.47 | **↓ 6.1%** |
+| Test SSIM | 0.8442 | 0.8500 | **↑ 0.69%** |
+| Edge Error | 0.0222 | 0.0227 | ↑ 2.3% |
+| Parameters | 12M | 17.1M | +42% |
+
+**🖼️ Sample Predictions**
+<table> 
+  <tr> 
+    <td><img src="results/v4/pred_vs_GT_1.png" width="300"/></td> 
+    <td><img src="results/v4/pred_vs_GT_2.png" width="300"/></td> 
+  </tr> 
+  <tr> 
+    <td><img src="results/v4/pred_vs_GT_3.png" width="300"/></td> 
+    <td><img src="results/v4/pred_vs_GT_4.png" width="300"/></td> 
+  </tr> 
+  <tr> 
+    <td><img src="results/v4/pred_vs_GT_5.png" width="300"/></td> 
+    <td><img src="results/v4/pred_vs_GT_6.png" width="300"/></td> 
+  </tr> 
+</table>
+
+**🧠 Analysis: Physics Loss — Right Direction, Insufficient Signal**
+* The Hybrid CNN-Swin architecture delivered marginal improvements over V3: MAE dropped 5.3% and RMSE dropped 6.1%. The CNN encoder/decoder successfully reduced the extreme over-smoothing seen in V3's pure transformer upsampling.
+* The physics loss (`physics_loss()` via Deepwave) was successfully integrated and verified — Deepwave forward modeling runs on GPU and produces valid gradients.
+* However, the physics loss contribution was **mathematically negligible**: `physics_loss ≈ 0.003` vs `total_loss ≈ 12.0`. Even at maximum weight (0.5), it contributed < 1% of the total gradient. The amplitude normalization step (dividing both synthetic and observed seismic by their respective max values) compressed the loss to near-zero.
+* The SSIM ceiling persists at `0.85` — a slight improvement over V3's `0.84`, but the fundamental "1D safe zone" mode collapse pattern remains visible in the predictions.
+* Training was interrupted 3 times by Modal worker preemptions. Only 89 of the planned 400 epochs completed. Checkpoint frequency was increased from 50 → 10 epochs after the first data loss incident.
+
+**🔑 Key Takeaways**
+* The Hybrid CNN-Swin architecture is a genuine improvement over pure Swin-UNet — CNN inductive bias produces less blurry predictions.
+* Physics-informed loss via Deepwave is technically feasible (runs on GPU, differentiable, correct shapes) but the current implementation's normalization scheme makes it too weak to break the SSIM ceiling.
+* The `0.84-0.85` SSIM ceiling appears to be a fundamental limit of the current loss formulation, not the architecture. The model needs a physics loss that's 50-100x stronger to provide meaningful gradient signal.
+
+**📂 Artifacts**
+* Weights: `results/v4/uNet_v4.pth`
+* Checkpoint: `results/v4/checkpoint_epoch_80.pth`
+* Validation PNGs: `results/v4/pred_vs_GT_*.png`
+* Evaluation Summary: `results/v4/eval_summary.txt`
+
+**➡️ Future Directions**
+* Redesign physics loss to compare **travel-time shifts** or **envelope mismatches** instead of amplitude-normalized MSE — these are more sensitive to velocity errors.
+* Increase physics loss magnitude by removing per-sample normalization and using a fixed global scaling.
+* Consider **multi-scale physics loss** — compare at multiple frequency bands to capture both macro structure and fine detail.
+* Explore **encoder-only physics** — apply the wave equation constraint directly to intermediate feature maps rather than the final output.
