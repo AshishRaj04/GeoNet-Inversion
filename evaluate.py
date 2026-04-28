@@ -6,7 +6,7 @@ app = modal.App("GeoNet-Evaluate")
 image = (
     modal.Image.debian_slim(python_version="3.11")
     .pip_install(
-        "torch==2.4.0", "numpy", "matplotlib", "einops", "deepwave",
+        "torch==2.4.0", "numpy", "matplotlib",
         extra_index_url="https://download.pytorch.org/whl/cu121",
     )
     .add_local_python_source("config")
@@ -22,7 +22,7 @@ vol_result = modal.Volume.from_name("FWI_Result", create_if_missing=True)
 @app.function(
     image=image,
     gpu="A100-80GB",
-    volumes={"/dataset": vol_data, "/results_v4": vol_result},   
+    volumes={"/dataset": vol_data, "/results_v5": vol_result},   
     secrets=[modal.Secret.from_name("FWI-Secret")],
     timeout=36000,
 )
@@ -58,7 +58,7 @@ def evaluate_modal():
     os.makedirs(config.RESULTS_DIR, exist_ok=True)
 
     print("=" * 60)
-    print("  GeoNet V4 — Modal Evaluation (Sample-Level Split)")
+    print("  GeoNet V5 — Modal Evaluation (Sample-Level Split)")
     print("=" * 60)
 
     print(f"\nLoading {len(config.ALL_FILE_PAIRS)} file pairs...")
@@ -127,7 +127,7 @@ def evaluate_modal():
     # Save summary
     summary_path = os.path.join(config.RESULTS_DIR, "eval_summary.txt")
     with open(summary_path, "w") as f:
-        f.write(f"GeoNet V4 Evaluation (Test Split — {len(test_dataset)} samples)\n")
+        f.write(f"GeoNet V5 Evaluation (Test Split — {len(test_dataset)} samples)\n")
         f.write(f"{'=' * 50}\n")
         f.write(f"Avg MAE:  {avg_mae:.2f} m/s\n")
         f.write(f"Avg RMSE: {avg_rmse:.2f}\n")
@@ -151,7 +151,7 @@ def main():
     print(f"\n🎯 Result: {result}")
 
     # Download evaluation results to local
-    local_dir = os.path.join("results", "v4")
+    local_dir = os.path.join("results", "v5")
     os.makedirs(local_dir, exist_ok=True)
 
     print(f"\nDownloading evaluation results to {local_dir}...")

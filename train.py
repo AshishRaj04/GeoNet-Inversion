@@ -6,7 +6,7 @@ app = modal.App("GeoNet-Inversion")
 image = (
     modal.Image.debian_slim(python_version="3.11")
     .pip_install(
-        "torch==2.4.0", "numpy", "matplotlib", "einops", "deepwave",
+        "torch==2.4.0", "numpy", "matplotlib",
         extra_index_url="https://download.pytorch.org/whl/cu121",
     )
     .add_local_python_source("config")
@@ -24,7 +24,7 @@ vol_result = modal.Volume.from_name("FWI_Result", create_if_missing=True)
 @app.function(
     image=image,
     gpu="A100-80GB",
-    volumes={"/dataset": vol_data, "/results_v4": vol_result},   
+    volumes={"/dataset": vol_data, "/results_v5": vol_result},   
     secrets=[modal.Secret.from_name("FWI-Secret")],
     timeout=36000,
 )
@@ -32,7 +32,7 @@ def train():
     import config
     import torch
     from torch.utils.data import DataLoader, Subset
-    from model import UNet, gradient_loss, ssim_loss, tv_loss, physics_loss
+    from model import UNet, gradient_loss, ssim_loss, tv_loss
     from dataset import MultiFileSeismicDataset       
     from utils import plot_loss, plot_lrs
 
@@ -54,7 +54,7 @@ def train():
 
     # ── Sample-level split ──
     print("=" * 60)
-    print("  GeoNet V4 (Physics-Informed)")
+    print("  GeoNet V5 (Deep CNN Encoder-Decoder)")
     print("=" * 60)
 
     print(f"\nLoading {len(config.ALL_FILE_PAIRS)} file pairs...")
@@ -65,20 +65,20 @@ def train():
     generator = torch.Generator().manual_seed(42)
     train_size = int(0.80 * total)
     val_size = int(0.10 * total)
+    test_size = total - train_size - val_size
 
-    indices = torch.randperm(total, generator=generator).tolist()
-    train_dataset = Subset(full_dataset, indices[:train_size])
-    val_dataset = Subset(full_dataset, indices[train_size:train_size + val_size])
-
-    print(f"  Train: {len(train_dataset)} | Val: {len(val_dataset)} | Test: {total - train_size - val_size}")
+    train_dataset, val_dataset, test_dataset = torch.utils.data.random_split(
+        full_dataset, [train_size, val_size, test_size], generator=generator,
+    )
+    print(f"  Train: {len(train_dataset)} | Val: {len(val_dataset)} | Test: {len(test_dataset)}")
 
     train_loader = DataLoader(
-        train_dataset, batch_size=config.BATCH_SIZE,
-        num_workers=0, shuffle=True, pin_memory=True,
+        train_dataset, batch_size=config.BATCH_SIZE, shuffle=True,
+        num_workers=4, pin_memory=True, drop_last=True,
     )
     val_loader = DataLoader(
-        val_dataset, batch_size=config.BATCH_SIZE,
-        num_workers=0, shuffle=False, pin_memory=True,
+        val_dataset, batch_size=config.BATCH_SIZE, shuffle=False,
+        num_workers=2, pin_memory=True,
     )
 
     # ── Model ──
@@ -109,33 +109,32 @@ def train():
     train_losses = []
     val_losses = []
     val_ssims = []
-    phys_losses = []
     lrs = []
     best_val_loss = float("inf")
     start_epoch = 0
 
-    # ── Resume from latest checkpoint if available ──
-    for try_epoch in [350, 300, 250, 200, 150, 100, 50]:
+    # ── Resume from checkpoint if available ──
+    for try_epoch in [350, 300, 250, 200, 150, 100, 50, 40, 30, 20, 10]:
         ckpt_path = os.path.join(config.RESULTS_DIR, f"checkpoint_epoch_{try_epoch}.pth")
         if os.path.exists(ckpt_path):
             print(f"Loading checkpoint: {ckpt_path}")
             checkpoint = torch.load(ckpt_path, map_location=device)
-            uNet.load_state_dict(checkpoint["model_state_dict"])
-            optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
-            scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
-            start_epoch = checkpoint["epoch"]
-            train_losses = checkpoint.get("train_losses", [])
-            val_losses = checkpoint.get("val_losses", [])
-            val_ssims = checkpoint.get("val_ssims", [])
-            phys_losses = checkpoint.get("phys_losses", [])
-            lrs = checkpoint.get("lrs", [])
-            best_val_loss = checkpoint.get("best_val_loss", min(val_losses) if val_losses else float("inf"))
-            print(f"Resuming from epoch {start_epoch}. Best Val Loss: {best_val_loss:.4f}")
-            break
-    # Suppress known Deepwave warnings (verified working in smoke test)
-    import warnings
-    warnings.filterwarnings("ignore", message="pml_freq was not set")
-    warnings.filterwarnings("ignore", message="At least six grid cells per wavelength")
+            try:
+                uNet.load_state_dict(checkpoint["model_state_dict"])
+                optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+                scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
+                start_epoch = checkpoint["epoch"]
+                train_losses = checkpoint.get("train_losses", [])
+                val_losses = checkpoint.get("val_losses", [])
+                val_ssims = checkpoint.get("val_ssims", [])
+                lrs = checkpoint.get("lrs", [])
+                best_val_loss = checkpoint.get("best_val_loss", min(val_losses) if val_losses else float("inf"))
+                print(f"Resuming from epoch {start_epoch}. Best Val Loss: {best_val_loss:.4f}")
+                break
+            except RuntimeError as e:
+                print(f"  ⚠ Incompatible checkpoint (old architecture), skipping: {e}")
+                print(f"  Starting fresh training from epoch 0.")
+                continue
 
     print(f"\n{'Epoch':>6} | {'Train Loss':>11} | {'Val Loss':>11} | {'Val SSIM':>9} | {'LR':>10}")
     print("-" * 65)
@@ -144,8 +143,6 @@ def train():
     for epoch in range(start_epoch, config.EPOCHS):
         uNet.train()
         total_train_loss = 0.0
-        total_phys_loss = 0.0
-        phys_batches = 0
 
         for x_batch, y_batch in train_loader:
             x_batch, y_batch = x_batch.to(device), y_batch.to(device)
@@ -162,15 +159,6 @@ def train():
                     + config.TV_WEIGHT * tv_loss(y_pred)
                 )
 
-            # ── V4: Physics loss (activated after warmup) ──
-            if (epoch + 1) >= config.PHYSICS_START_EPOCH:
-                ramp = min(1.0, (epoch + 1 - config.PHYSICS_START_EPOCH) / config.PHYSICS_RAMP_EPOCHS)
-                phys_weight = config.PHYSICS_WEIGHT + ramp * (config.PHYSICS_MAX_WEIGHT - config.PHYSICS_WEIGHT)
-                p_loss = physics_loss(y_pred, x_batch)
-                loss = loss + config.TOTAL_LOSS_SCALE * phys_weight * p_loss
-                total_phys_loss += p_loss.item()
-                phys_batches += 1
-
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(uNet.parameters(), max_norm=1.0)
@@ -180,9 +168,7 @@ def train():
             total_train_loss += loss.item()
 
         mean_train_loss = total_train_loss / len(train_loader)
-        mean_phys_loss = total_phys_loss / max(phys_batches, 1)
         train_losses.append(mean_train_loss)
-        phys_losses.append(mean_phys_loss)
         current_lr = optimizer.param_groups[0]["lr"]
         lrs.append(current_lr)
         scheduler.step()
@@ -242,7 +228,6 @@ def train():
                     "train_losses": train_losses,
                     "val_losses": val_losses,
                     "val_ssims": val_ssims,
-                    "phys_losses": phys_losses,
                     "lrs": lrs,
                     "best_val_loss": best_val_loss,
                 },
@@ -265,7 +250,6 @@ def train():
             "train_losses": train_losses,
             "val_losses": val_losses,
             "val_ssims": val_ssims,
-            "phys_losses": phys_losses,
             "lrs": lrs,
             "best_val_loss": best_val_loss,
         },
@@ -282,7 +266,7 @@ def main():
     print(f"\n🎯 Result: {result}")
 
     # Download results from volume to local
-    local_dir = os.path.join("results", "v4")
+    local_dir = os.path.join("results", "v5")
     os.makedirs(local_dir, exist_ok=True)
 
     print(f"\nDownloading results to {local_dir}...")
